@@ -8,7 +8,7 @@ def main():
     columns = load_data(file_path)
     results = run_queries(columns)
 
-    write_output(results, "ScanResult_Uxxxx176G.csv")
+    write_output(results, "ScanResult_UxxxxxxxG.csv") #put your matric number in 
 
 if __name__ == "__main__":
     main()
