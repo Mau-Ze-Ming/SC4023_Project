@@ -22,10 +22,10 @@ MONTH_MAP = {
 
 def parse_month(month_str):
     """
-    Convert 'Jan-15' → (2015, 1)
+    Convert '15-Jan' → (2015, 1)
     """
     try:
-        m_part, y_part = month_str.strip().split('-')
+        y_part, m_part = month_str.strip().split('-')
         month = MONTH_MAP[m_part.upper()]
         year = 2000 + int(y_part)  
         return year, month
