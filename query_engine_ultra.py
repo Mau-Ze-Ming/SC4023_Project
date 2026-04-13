@@ -38,52 +38,6 @@ def parse_matric_number(matric_number):
         "target_towns": sorted(unique_digits)
     }
 
-
-def find_records_in_single_month(columns, target_towns, min_area, year, month, indices=None, price_max=4725):
-    """
-    Find all records that match conditions in a single month.
-    
-    Args:
-        columns: Columnar data storage
-        target_towns: Set of town codes (integers)
-        min_area: Minimum floor area requirement (y)
-        year: Target year
-        month: Target month
-        indices: Optional pre-filtered indices (already filtered by time, town, area, price)
-        price_max: Maximum price per square meter (default 4725)
-    
-    Returns:
-        tuple: (best_idx, best_price_per_sqm) or (None, None) if no record found
-    """
-    # Determine which indices to scan
-    if indices is None:
-        scan_range = range(len(columns["year"]))
-    else:
-        scan_range = indices
-    
-    best_idx = None
-    best_price = float('inf')
-    
-    for i in scan_range:
-        # Check if record is in the target month
-        if columns["year"][i] != year or columns["month"][i] != month:
-            continue
-        
-        # Check area
-        if columns["area"][i] < min_area:
-            continue
-        
-        # Calculate price per square meter
-        price_per_sqm = columns["price"][i] / columns["area"][i]
-        
-        # Only consider records with price <= price_max
-        if price_per_sqm <= price_max and price_per_sqm < best_price:
-            best_price = price_per_sqm
-            best_idx = i
-    
-    return best_idx, best_price
-
-
 def prefilter_dataset(columns, target_year, start_month, target_towns, x_max=8, y_min=80, price_max=4725):
     """
     Pre-filter the entire dataset to get candidate indices for all queries.
@@ -150,13 +104,11 @@ def prefilter_dataset(columns, target_year, start_month, target_towns, x_max=8, 
     
     return candidate_indices
 
-
 def get_month_key(year, month):
     """
     Generate a unique key for a specific month.
     """
     return (year, month)
-
 
 def get_next_month(year, month):
     """
@@ -200,27 +152,66 @@ def get_town_name(code):
     # If input is a single integer, return single name
     return reverse_town_map.get(code, "UNKNOWN")
 
+def precompute_monthly_best(columns, target_towns, months_list, candidate_indices, y_min, y_max, price_max):
+    """
+    Pre-compute best records for all months and all y values in ONE PASS per month.
+    Uses descending y order to process each month's records only once.
+    
+    Returns:
+        dict: monthly_best[y][month_key] = {"idx": idx, "price": price, "area": area}
+    """
+    monthly_best = {y: {} for y in range(y_min, y_max + 1)}
+    
+    # For each month
+    for year, month in months_list:
+        # Step 1: Collect all records in this month from candidate_indices
+        month_records = []
+        for idx in candidate_indices:
+            if columns["year"][idx] == year and columns["month"][idx] == month:
+                if columns["town"][idx] in target_towns:
+                    price_per_sqm = columns["price"][idx] / columns["area"][idx]
+                    if price_per_sqm <= price_max:
+                        month_records.append({
+                            "idx": idx,
+                            "area": columns["area"][idx],
+                            "price": price_per_sqm
+                        })
+        
+        # Step 2: Sort by area descending
+        month_records.sort(key=lambda r: r["area"], reverse=True)
+        
+        # Step 3: One-pass scan to compute best for all y
+        best_price = float('inf')
+        best_idx = None
+        record_ptr = 0
+        num_records = len(month_records)
+        
+        for y in range(y_max, y_min - 1, -1):
+            # Add all records with area >= y
+            while record_ptr < num_records and month_records[record_ptr]["area"] >= y:
+                if month_records[record_ptr]["price"] < best_price:
+                    best_price = month_records[record_ptr]["price"]
+                    best_idx = month_records[record_ptr]["idx"]
+                record_ptr += 1
+            
+            if best_idx is not None:
+                monthly_best[y][(year, month)] = {
+                    "idx": best_idx,
+                    "price": best_price,
+                    "area": month_records[record_ptr - 1]["area"] if record_ptr > 0 else 0
+                }
+    
+    return monthly_best
+
 
 def run_queries(columns, matric_number, x_range=(1, 8), y_range=(80, 150), max_price=4725):
     """
-    Execute all queries for x in x_range and y in y_range.
-    Uses incremental optimization:
-    - For fixed y, results for x can be derived from x-1 + new month data
-    
-    Args:
-        columns: Dictionary containing columnar data storage
-        matric_number: Matriculation number
-        x_range: Tuple of (min_x, max_x), default (1, 8)
-        y_range: Tuple of (min_y, max_y), default (80, 150)
-        max_price: Maximum price per square meter threshold, default 4725
-    
-    Returns:
-        list: List of dictionaries containing valid (x,y) pair results
+    Execute all queries using optimized pre-computation.
     """
     # Start total timer
     total_start_time = time.time()
     
-    # Parse matric number to get query parameters
+    # Parse matric number
     params = parse_matric_number(matric_number)
     target_year = params["target_year"]
     start_month = params["start_month"]
@@ -240,7 +231,7 @@ def run_queries(columns, matric_number, x_range=(1, 8), y_range=(80, 150), max_p
     print(f"Max Price: {max_price}")
     print()
     
-    # Step 1: Pre-filter the entire dataset
+    # Step 1: Pre-filter the dataset
     candidate_indices = prefilter_dataset(
         columns, target_year, start_month, target_towns, 
         x_max=x_max, y_min=y_min, price_max=max_price
@@ -250,69 +241,47 @@ def run_queries(columns, matric_number, x_range=(1, 8), y_range=(80, 150), max_p
     if not candidate_indices:
         return []
     
-    # Step 2: Pre-compute best records for each individual month
-    print("Pre-computing monthly best records...")
-    
-    # Generate list of months in the range (x=1 to x_max)
+    # Step 2: Generate list of months
     months_list = []
     current_year, current_month = target_year, start_month
     for x in range(1, x_max + 1):
         months_list.append((current_year, current_month))
         current_year, current_month = get_next_month(current_year, current_month)
     
-    # For each y, store the best record for each month
-    # Structure: monthly_best[y][month_key] = (best_idx, best_price)
-    monthly_best = {}
+    # Step 3: Pre-compute monthly best records
+    print("Pre-computing monthly best records...")
+    precompute_start = time.time()
     
-    # Process each y in the specified range (from high to low for optimization)
-    for y in range(y_max, y_min - 1, -1):
-        monthly_best[y] = {}
-        for year, month in months_list:
-            best_idx, best_price = find_records_in_single_month(
-                columns, target_towns, y, year, month, candidate_indices, max_price
-            )
-            if best_idx is not None:
-                monthly_best[y][(year, month)] = {
-                    "idx": best_idx,
-                    "price": best_price,
-                    "area": columns["area"][best_idx]
-                }
+    monthly_best = precompute_monthly_best(
+        columns, target_towns, months_list, candidate_indices, y_min, y_max, max_price
+    )
     
-    print("Monthly pre-computation complete!")
+    precompute_time = time.time() - precompute_start
+    print(f"Monthly pre-computation completed in {precompute_time:.2f} seconds")
     print()
     print("Generating final query results...")
     
-    # Step 3: Incrementally compute results for each x and y
-    # For fixed y, result for x = min(result for x-1, best in month x)
+    # Step 4: Incrementally compute results for each x and y
     results = []
     
-    # For each y in the specified range
     for y in range(y_min, y_max + 1):
-        # Track cumulative best as x increases
         cumulative_best_idx = None
         cumulative_best_price = float('inf')
-        cumulative_best_area = 0
         
-        # For each x in the specified range (increasing)
         for x in range(x_min, x_max + 1):
-            # Get the month for this x (the new month to add)
-            # Note: months_list is 0-indexed, so x-1 gives the correct month
             year, month = months_list[x-1]
             month_key = (year, month)
             
-            # Add this month's best to cumulative results
+            # Get this month's best from pre-computed cache
             if month_key in monthly_best[y]:
                 month_best = monthly_best[y][month_key]
                 month_price = month_best["price"]
                 month_idx = month_best["idx"]
                 
-                # Update cumulative best if this month has a better price
                 if month_price < cumulative_best_price:
                     cumulative_best_price = month_price
                     cumulative_best_idx = month_idx
-                    cumulative_best_area = month_best["area"]
             
-            # The result for (x, y) is the cumulative best so far
             if cumulative_best_idx is not None and cumulative_best_price <= max_price:
                 results.append({
                     "x": x,
@@ -327,13 +296,11 @@ def run_queries(columns, matric_number, x_range=(1, 8), y_range=(80, 150), max_p
                     "price_per_sqm": round(cumulative_best_price)
                 })
     
-    # Sort results by x ascending, then y ascending
+    # Sort results
     results.sort(key=lambda r: (r["x"], r["y"]))
     
-    print(f"Found {len(results)} valid (x, y) pairs")
-
     total_time = time.time() - total_start_time
+    print(f"Found {len(results)} valid (x, y) pairs")
     print(f"TOTAL TIME: {total_time:.2f} seconds")
-    print()
     
     return results
