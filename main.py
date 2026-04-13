@@ -1,5 +1,5 @@
 from data_storage import load_data
-from query_engine import run_queries
+from query_engine_ultra import run_queries
 from output_writer import write_output
 
 def main():
