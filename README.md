@@ -107,7 +107,7 @@ If no valid result exists:
 
 ## 🧪 Notes
 
-* The dataset uses the format `Jan-15` for dates and is parsed accordingly.
+* The dataset uses the format `15-Jan` for dates and is parsed accordingly.
 * The program avoids high-level libraries (e.g., pandas) to comply with assignment requirements.
 * File paths are relative to ensure portability across systems.
 
