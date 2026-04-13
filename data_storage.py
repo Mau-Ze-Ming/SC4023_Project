@@ -26,8 +26,8 @@ def parse_month(month_str):
     """
     try:
         y_part, m_part = month_str.strip().split('-')
+        year = 2000 + int(y_part)
         month = MONTH_MAP[m_part.upper()]
-        year = 2000 + int(y_part)  
         return year, month
     except:
         return None, None
