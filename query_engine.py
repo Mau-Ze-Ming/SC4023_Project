@@ -8,7 +8,7 @@ def parse_matric_number(matric_number):
     Format example: U2222087K
     
     Returns:
-        dict: Contains target_year, start_month, target_town_digits, unique_digits
+        dict: Contains target_year, start_month, target_towns
     """
     # Extract all digits from matric number
     digits = []
